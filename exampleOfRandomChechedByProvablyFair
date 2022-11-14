@@ -1,0 +1,236 @@
+<?php
+
+class ProvablyFair
+{
+    /** @var int */
+    public const BYTES = 6;
+    /** @var string */
+    protected $algorithm = 'sha512/256';
+    /** @var string */
+    protected $serverSeed;
+    /** @var string */
+    protected $clientSeed;
+    /** @var string */
+    protected $nonce;
+    /** @var float */
+    protected $min = 1;
+    /** @var float */
+    protected $max = 1;
+
+    /**
+     * @return string
+     */
+    public function getAlgorithm(): string
+    {
+        return $this->algorithm;
+    }
+
+    /**
+     * @throws Exception
+     */
+    public function setAlgorithm(string $algorithm): void
+    {
+        if (is_null($algorithm) || !in_array($algorithm, hash_hmac_algos())) {
+            throw new \Exception($algorithm);
+        }
+        $this->algorithm = $algorithm;
+    }
+
+    /**
+     * @return string
+     */
+    public function getServerSeed(): string
+    {
+        return $this->serverSeed;
+    }
+
+    /**
+     * @param string $serverSeed
+     */
+    public function setServerSeed(string $serverSeed): void
+    {
+        $this->serverSeed = $serverSeed;
+    }
+
+    /**
+     * @return string
+     */
+    public function getClientSeed(): string
+    {
+        return $this->clientSeed;
+    }
+
+    /**
+     * @param string $clientSeed
+     */
+    public function setClientSeed(string $clientSeed): void
+    {
+        $this->clientSeed = $clientSeed;
+    }
+
+    /**
+     * @return string
+     */
+    public function getNonce(): string
+    {
+        return $this->nonce;
+    }
+
+    /**
+     * @param string $nonce
+     */
+    public function setNonce(string $nonce): void
+    {
+        $this->nonce = $nonce;
+    }
+
+    /**
+     * @return float
+     */
+    public function getMin(): float
+    {
+        return $this->min;
+    }
+
+    /**
+     * @return float
+     */
+    public function getMax(): float
+    {
+        return $this->max;
+    }
+
+    /**
+     * @param float $min
+     * @param float $max
+     * @throws Exception
+     */
+    public function setRange(float $min, float $max): void
+    {
+        if ($min >= $max) {
+            throw new Exception($min . $max);
+        }
+
+        $this->min = $min;
+        $this->max = $max;
+    }
+
+    /**
+     * Generate a value for a provably fair game
+     */
+    public function roll(): float
+    {
+        $hash = hash_hmac($this->algorithm, "{$this->clientSeed}-{$this->nonce}", $this->serverSeed);
+        $normalized = hexdec($hash) / (16 ** strlen($hash));
+
+        return $this->min + $normalized * ($this->max - $this->min);
+    }
+
+    /**
+     * Verify a value for a provably fair game
+     * @param float $result
+     * @return bool
+     */
+    public function verify(float $result): bool
+    {
+        return bccomp("{$result}", "{$this->roll()}", 6) == 0;
+    }
+}
+
+
+class Item
+{
+    private int $weight;
+    private int $name;
+
+    public function __construct(string $name, float $weight)
+    {
+        $this->name = $name;
+        $this->weight = $weight;
+    }
+}
+
+class Randomizer
+{
+    private array $items;
+
+    private $algorithm = 'sha-256';
+
+    private $nonce = 0;
+
+    private $min = 0;
+
+    public function __construct(array $items)
+    {
+        $this->items = $items;
+    }
+
+    public function getRandomItemByProbability(array $items, $clientSeed)
+    {
+        $totalProbability = 0; // This is defined to keep track of the total amount of entries
+
+        foreach ($items as $item => $probability) {
+            $totalProbability += $probability;
+        }
+
+        $stopAt = $this->generateRandomNumber($clientSeed); // This picks a random entry to select
+        $currentProbability = 0; // The current entry count, when this reaches $stopAt the winner is chosen
+
+        foreach ($items as $item) { // Go through each possible item
+            $currentProbability += $item->weight; // Add the probability to our $currentProbability tracker
+            if ($currentProbability >= $stopAt) { // When we reach the $stopAt variable, we have found our winner
+                return $item;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * @throws Exception
+     */
+    private function generateRandomNumber($clientSeed): float
+    {
+        if (empty($this->items)) {
+            throw new Exception('Empty set of items');
+        }
+
+        $serverSeed = $this->randomString(32);
+
+        $provably = new ProvablyFair();
+
+        $provably->setClientSeed($clientSeed);
+        $provably->setServerSeed($serverSeed);
+        $provably->setNonce($this->nonce);
+
+
+        $min = 1;
+        $max = 0;
+
+        foreach ($this->items as $item) {
+            $max = $max + $item->weight;
+        }
+
+        $provably->setRange(1, $max);
+
+        return $provably->roll();
+    }
+
+    private function randomString(int $length = 64): string
+    {
+        if ($length < 1) {
+            throw new \RangeException("Length must be a positive integer");
+        }
+
+        $keyspace = '0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ';
+
+        $pieces = [];
+        $max = mb_strlen($keyspace, '8bit') - 1;
+        for ($i = 0; $i < $length; ++$i) {
+            $pieces [] = $keyspace[random_int(0, $max)];
+        }
+
+        return implode('', $pieces);
+    }
+
+}
